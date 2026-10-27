@@ -1,464 +1,449 @@
-"""2026학년도 6월 모의평가 21번 — '위험한 점을 찾아라' (대본: script.md)
+"""2026학년도 6월 모의평가 21번 — '스위치 하나로 끝나는 문제' (대본: script.md, 나레이션: narration.py)
 
-판서(노트 필기)형 화면, 한 장에 한 주제. 장을 넘길 때 얻은 결과를 오른쪽 칸에 모아 둔다.
+화면 구성: 왼쪽은 애니메이션 무대, 오른쪽은 장면마다 결론이 한 줄씩 적히는 노트.
+나레이션 음성 길이에 맞춰 장면이 진행된다 (먼저 make_voice.py로 voice/ 생성).
 렌더: manim -qh scene.py Killer21   (손글씨 폰트 Nanum Pen Script 필요)
 """
+import json
+from pathlib import Path
+
 from manim import *
 
+HERE = Path(__file__).parent
+VOICE_DIR = HERE / "voice"
+DUR = json.loads((VOICE_DIR / "durations.json").read_text())
+
 PEN = "Nanum Pen"
-PRINT = "Noto Serif CJK KR"
 SANS = "Noto Sans CJK KR"
-config.background_color = "#fdfcf8"
+config.background_color = "#101218"
 
-INK = "#222222"      # 인쇄된 문제
-PEN_INK = "#2b2b2b"  # 필기
-ACCENT = "#d6342c"   # 포인팅 전용 (동그라미, 밑줄, 위험한 점, 답)
-FAINT = "#9a9a9a"    # 보조 설명
+# 무대: 흰 선 + 강조색 하나
+W = "#e8e8e8"
+DIM = "#6f7480"
+ACC = "#ff6b6b"
+# 노트 카드: 종이 + 잉크 + 같은 강조색 계열
+PAPER = "#f7f5ee"
+NOTE_INK = "#2b2b2b"
+NOTE_ACC = "#d6342c"
 
-MAIN_L = -6.7        # 본문 왼쪽 끝 x (오른쪽 3.2 이후는 '앞에서 얻은 것' 칸)
+SX = -2.2  # 무대 중심 x (오른쪽 3.0부터는 노트)
 
 
 def f(x):
     return (x - 1) * (x - 2)
 
 
-def row(*parts, buff=0.1):
-    return VGroup(*parts).arrange(RIGHT, buff=buff)
+def M(tex, size=48, color=W):
+    return MathTex(tex, font_size=size, color=color)
 
 
-def P(text, size=22):
-    """인쇄체(문제 본문)."""
-    return Text(text, font=PRINT, font_size=size, color=INK)
+def T(text, size=30, color=W):
+    return Text(text, font=SANS, font_size=size, color=color)
 
 
-def PM(*tex, size=30):
-    return MathTex(*tex, font_size=size, color=INK)
-
-
-def hw(text, size=36, color=PEN_INK):
-    """손글씨."""
+def hw(text, size=28, color=NOTE_INK):
     return Text(text, font=PEN, font_size=size, color=color)
-
-
-def hfrac(num, den, size=36, color=PEN_INK):
-    n = hw(num, size, color)
-    d = hw(den, size, color)
-    bar = Line(LEFT, RIGHT, color=color, stroke_width=2.5).set_width(max(n.width, d.width) + 0.15)
-    return VGroup(n, bar, d).arrange(DOWN, buff=0.07)
-
-
-def hlim(sub, size=36, color=PEN_INK):
-    return VGroup(hw("lim", size, color), hw(sub, size * 0.6, color)).arrange(DOWN, buff=0.0)
-
-
-def check_mark(color=PEN_INK, size=0.22):
-    return VMobject(color=color, stroke_width=3).set_points_as_corners(
-        [LEFT * size * 0.5 + UP * size * 0.1, DOWN * size * 0.4, RIGHT * size * 0.6 + UP * size * 0.6]
-    )
-
-
-def at(mob, x, y):
-    """왼쪽 끝을 (x, y)에 맞춘다."""
-    return mob.move_to([x, y, 0], aligned_edge=LEFT)
 
 
 class Killer21(Scene):
     def construct(self):
-        self.cap = None
-        self.pen = Dot(radius=0.06, color=PEN_INK).set_opacity(0)
-        self.add(self.pen)
-        self.side = None
-        self.side_items = []
+        self.deadline = 0
+        self.notes = []
         self.strip = None
-        self.page1()
-        self.page2()
-        self.page3()
-        self.page4()
+        self.card = None
+        self.hook()
+        self.scene1()
+        self.scene2()
+        self.scene3()
+        self.scene4()
+        self.scene5()
+        self.scene6()
+        self.outro()
 
-    # ---------- helpers ----------
-    def say(self, text, wait=None):
-        new = Text(text, font=SANS, font_size=28, color=WHITE)
-        if new.width > 13:
-            new.scale_to_fit_width(13)
-        new.to_edge(DOWN, buff=0.22)
-        bg = BackgroundRectangle(new, color=BLACK, fill_opacity=0.72, buff=0.12)
-        new = VGroup(bg, new)
-        anims = [FadeIn(new, run_time=0.3)]
-        if self.cap is not None:
-            anims.append(FadeOut(self.cap, run_time=0.3))
-        self.play(*anims)
-        self.cap = new
-        self.wait(wait if wait is not None else max(2.0, len(text) * 0.11))
+    # ---------- 나레이션 동기화 ----------
+    def vo(self, key):
+        """음성을 틀고, 이 문장이 끝나는 시각을 기억한다."""
+        self.sync()
+        self.add_sound(str(VOICE_DIR / f"{key}.mp3"))
+        self.deadline = self.renderer.time + DUR[key]
 
-    def write(self, *mobs, color=None):
-        """펜 끝이 따라가며 한 요소씩 필기한다."""
-        for m in mobs:
-            c = color or m.get_color()
-            self.pen.set_color(c)
-            start = m.get_left()
-            if self.pen.get_fill_opacity() == 0:
-                self.pen.move_to(start)
-                self.play(self.pen.animate.set_opacity(1), run_time=0.2)
-            else:
-                self.play(self.pen.animate.move_to(start), run_time=0.35)
-            rt = min(2.4, max(0.5, m.width * 0.32))
-            self.play(Write(m), self.pen.animate.move_to(m.get_right()), run_time=rt)
-            self.wait(0.15)
+    def sync(self, pad=0.25):
+        """현재 문장이 끝날 때까지 기다린다."""
+        rem = self.deadline - self.renderer.time
+        if rem > 0:
+            self.wait(rem + pad)
 
-    def pen_off(self):
-        if self.pen.get_fill_opacity() > 0:
-            self.play(self.pen.animate.set_opacity(0), run_time=0.2)
-
-    def mark(self, anim, run_time=0.7):
-        self.play(anim, run_time=run_time)
-
-    def ellipse_around(self, mob, color, pad=(0.25, 0.2)):
-        return Ellipse(width=mob.width + pad[0], height=mob.height + pad[1],
-                       color=color, stroke_width=3).move_to(mob)
-
-    def underline(self, mob, color, buff=0.06):
-        return Line(mob.get_corner(DL) + DOWN * buff, mob.get_corner(DR) + DOWN * buff,
-                    color=color, stroke_width=3)
-
+    # ---------- 공통 ----------
     def keep(self):
-        fixed = [self.cap, self.pen, self.side, self.strip]
-        return [m for m in fixed if m is not None] + self.side_items
+        fixed = [self.strip, self.card, getattr(self, "src", None)]
+        return [m for m in fixed if m is not None] + self.notes
 
-    def turn(self):
-        """장 넘김: 칸과 문제 줄만 남기고 본문을 왼쪽으로 넘긴다."""
-        self.pen_off()
-        # Indicate 등이 남긴 임시 그룹도 '남길 것'만 담고 있으면 남긴다.
+    def clear_stage(self):
         kept = set()
         for m in self.keep():
             kept.update(m.get_family())
         rest = [m for m in self.mobjects
-                if m not in kept and not (m.submobjects and all(sm in kept for sm in m.get_family()[1:]))]
-        self.play(*[FadeOut(m, shift=LEFT * 1.5) for m in rest], run_time=0.9)
+                if m not in kept and not (m.submobjects and all(s in kept for s in m.get_family()[1:]))]
+        if rest:
+            self.play(*[FadeOut(m) for m in rest], run_time=0.5)
 
-    # ---------- '앞에서 얻은 것' 칸 ----------
-    def open_side(self):
-        panel = RoundedRectangle(width=3.55, height=6.0, corner_radius=0.12,
-                                 stroke_color="#cfcfcf", fill_color="#f3f2ee", fill_opacity=1)
-        panel.move_to([5.05, -0.25, 0])
-        title = hw("앞에서 얻은 것", 32).next_to(panel.get_corner(UL), DR, buff=0.2)
-        self.play(FadeIn(panel), FadeIn(title))
-        self.remove(panel, title)
-        self.side = VGroup(panel, title)
-        self.add(self.side)
-        self.side_anchor = title
+    def stage_axes(self, x_range, y_range, width, height, center):
+        return Axes(x_range=x_range, y_range=y_range, x_length=width, y_length=height, tips=False,
+                    axis_config={"color": DIM, "stroke_width": 2, "include_ticks": False}).move_to(center)
 
-    def collect(self, src, text, color=PEN_INK, size=32):
-        tgt = hw(text, size, color)
-        last = self.side_items[-1] if self.side_items else self.side_anchor
-        tgt.next_to(last, DOWN, buff=0.28).align_to(self.side_anchor, LEFT)
-        self.play(Indicate(src, color=ACCENT, scale_factor=1.12), run_time=0.5)
-        self.play(TransformFromCopy(src, tgt), run_time=0.8)
-        self.side_items.append(tgt)
-        return tgt
+    def ticks(self, ax, xs, size=28):
+        return VGroup(*[M(str(n), size, DIM).next_to(ax.c2p(n, 0), DOWN, buff=0.12) for n in xs])
 
-    # ---------- 문제 ----------
-    def build_problem(self):
-        no = P("21.", 24)
-        m_f = PM(r"f(x)=(x-1)(x-2)")
-        t_lead = P("최고차항의 계수가 1인")
-        r1 = row(no, P("함수"), m_f, P("와"), t_lead)
-        t_quart = P("사차함수")
-        m_g = PM("g(x)")
-        r2 = row(t_quart, m_g, P("가 다음 조건을 만족시킨다."))
-        b1a = P("모든 실수")
-        b1 = row(b1a, PM("a"), P("에 대하여"))
-        lim1 = PM(r"\lim_{x\to a}", r"\frac{g(x)\times|f(x)|}{f(x)}")
-        lim2 = PM(r"\lim_{x\to a}", r"\frac{|g(x)-f(x)|}{g(x)}")
-        b2 = row(lim1, P("의 값과"), lim2, P("의 값이"), buff=0.12)
-        b3b = P("존재")
-        b3 = row(P("모두"), b3b, P("한다."), buff=0.06)
-        inner = VGroup(b1, b2, b3).arrange(DOWN, aligned_edge=LEFT, buff=0.16)
-        box = SurroundingRectangle(inner, color=INK, stroke_width=1.5, buff=0.18, corner_radius=0)
-        m_gm1 = PM("g(-1)")
-        r3 = row(m_gm1, P("의 값을 구하시오. [4점]"))
-        prob = VGroup(r1, r2, VGroup(box, inner), r3).arrange(DOWN, aligned_edge=LEFT, buff=0.2)
-        for part in (r2, prob[2], r3):
-            part.shift(RIGHT * 0.38)
-        if prob.width > 7.4:
-            prob.scale_to_fit_width(7.4)
-        prob.to_corner(UL, buff=0.3)
-        self.prob = prob
-        self.p_lead = VGroup(t_lead, t_quart, m_g)
-        self.p_all = b1a
-        self.p_exist = b3b
-        self.p_lim1 = lim1[1]
-        return prob
+    # ---------- 노트 카드 ----------
+    def open_card(self):
+        card = RoundedRectangle(width=4.0, height=7.6, corner_radius=0.15, stroke_width=0,
+                                fill_color=PAPER, fill_opacity=1).move_to([5.0, 0, 0])
+        title = hw("21번 노트", 38).next_to(card.get_corner(UL), DR, buff=0.25)
+        rule = Line(LEFT, RIGHT, color="#d9d5c8", stroke_width=2).set_width(3.5)
+        rule.next_to(title, DOWN, buff=0.12).set_x(card.get_x())
+        src = Text("출처: 2026학년도 6월 모의평가 수학 21번 (한국교육과정평가원)",
+                   font=SANS, font_size=13, color=DIM)
+        src.to_corner(DL, buff=0.15)
+        self.play(FadeIn(card, shift=LEFT * 0.6), run_time=0.7)
+        self.play(Write(title), Create(rule), FadeIn(src), run_time=0.8)
+        self.remove(card, title, rule)
+        self.card = VGroup(card, title, rule)
+        self.add(self.card)
+        self.src = src
+        self.note_anchor = rule
 
-    def build_strip(self):
-        """2장부터 맨 위에 두는 한 줄짜리 문제."""
-        s1 = PM(r"\lim_{x\to a}\frac{g(x)\,|f(x)|}{f(x)}", size=26)
-        s2 = PM(r"\lim_{x\to a}\frac{|g(x)-f(x)|}{g(x)}", size=26)
-        s3 = P("모든 실수 a에서 모두 존재", 18)
-        s4 = PM(r"g(-1)=\,?", size=26)
-        strip = row(s1, s2, s3, s4, buff=0.5)
-        at(strip, MAIN_L, 3.55)
-        line = Line([-7.1, 0, 0], [7.1, 0, 0], color="#d8d8d8", stroke_width=1.5)
-        line.next_to(strip, DOWN, buff=0.1).set_x(0)
-        self.s_lim2 = s2
-        self.s_gm1 = s4
-        return VGroup(strip, line)
+    def note(self, *lines, accent=None, run_time=None):
+        """노트에 한 항목(여러 줄)을 손글씨로 적는다. accent: 강조할 줄 번호."""
+        group = VGroup(*[hw(t, 27, NOTE_ACC if i == accent else NOTE_INK) for i, t in enumerate(lines)])
+        group.arrange(DOWN, aligned_edge=LEFT, buff=0.08)
+        for g in group[1:]:
+            g.shift(RIGHT * 0.3)
+        if group.width > 3.55:
+            group.scale_to_fit_width(3.55)
+        last = self.notes[-1] if self.notes else self.note_anchor
+        group.next_to(last, DOWN, buff=0.22).align_to(self.note_anchor, LEFT).shift(RIGHT * 0.05)
+        self.play(Write(group), run_time=run_time or min(2.5, 0.9 * len(lines)))
+        self.notes.append(group)
+        return group
 
-    # ---------- 1장: 첫 번째 조건 ----------
-    def page1(self):
-        prob = self.build_problem()
-        self.src = Text("출처: 2026학년도 6월 모의평가 수학 21번 (한국교육과정평가원)",
-                        font=SANS, font_size=14, color=FAINT).to_corner(UR, buff=0.12)
-        self.play(FadeIn(self.src))
-        for part in prob:
-            self.play(FadeIn(part, shift=UP * 0.1), run_time=0.6)
-        self.say("오늘 문제는 2026학년도 6월 모의평가 21번입니다.")
-        self.say("먼저 문제부터 꼼꼼히 읽어 봅시다.", 1.5)
+    # ---------- 오프닝: 훅 ----------
+    def hook(self):
+        given = M(r"f(x)=(x-1)(x-2)", 44)
+        g_desc = T("g(x): 최고차항의 계수가 1인 사차함수", 26, DIM)
+        lim1 = MathTex(r"\lim_{x\to a}", r"g(x)", r"\frac{|f(x)|}{f(x)}", font_size=50, color=W)
+        lim2 = MathTex(r"\lim_{x\to a}", r"\frac{|g(x)-f(x)|}{g(x)}", font_size=50, color=W)
+        lims = VGroup(lim1, lim2).arrange(RIGHT, buff=1.4)
+        cond = T("모든 실수 a에서 두 극한이 모두 존재", 26, DIM)
+        ask = M(r"g(-1)=\ ?", 46)
+        prob = VGroup(given, g_desc, lims, cond, ask).arrange(DOWN, buff=0.35)
 
-        ul = VGroup(self.underline(self.prob[0][-1], PEN_INK),
-                    self.underline(VGroup(self.p_lead[1], self.p_lead[2]), PEN_INK))
-        self.mark(Create(ul))
-        self.say("g(x)는 최고차항의 계수가 1인 사차함수.")
-        self.mark(Create(self.ellipse_around(self.p_all, ACCENT)))
-        self.mark(Create(self.ellipse_around(self.p_exist, ACCENT)))
-        self.say("조건을 보면, 모든 실수 a에서 두 극한이 존재한다고 합니다.")
-        self.say("웬만한 점에서는 극한이 당연히 존재하죠.")
-        self.say("그런데도 굳이 말한 건, 위험한 점이 있다는 신호입니다.")
+        self.vo("hook1")
+        for m in (given, g_desc):
+            self.play(FadeIn(m, shift=UP * 0.15), run_time=0.5)
+        self.play(Write(lim1), Write(lim2), run_time=1.6)
+        self.play(FadeIn(cond), FadeIn(ask), run_time=0.6)
 
-        self.mark(Create(self.ellipse_around(self.p_lim1, ACCENT, pad=(0.3, 0.15))))
-        self.say("첫 번째 식부터 봅시다. 신경 쓰이는 건 |f(x)|/f(x).")
+        self.vo("hook2")
+        self.play(lim1[2].animate.set_color(ACC), run_time=0.5)
+        sw = T("스위치", 26, ACC).next_to(lim1[2], DOWN, buff=0.15)
+        q = T("…여기도?", 26, ACC).next_to(lim2, DOWN, buff=0.15)
+        self.play(FadeIn(sw, shift=UP * 0.1), Circumscribe(lim1[2], color=ACC), run_time=1.0)
+        self.play(FadeIn(q, shift=UP * 0.1), run_time=0.6)
 
-        top = prob.get_bottom()[1] - 0.3
-        ax = Axes(x_range=[-0.5, 3.5, 1], y_range=[-0.8, 2.6, 1], x_length=3.0, y_length=2.2,
-                  tips=False, axis_config={"color": INK, "stroke_width": 1.5, "include_ticks": False})
-        ax.move_to([-5.2, top - 1.2, 0])
-        fg = ax.plot(f, x_range=[-0.15, 3.15], color=PEN_INK, stroke_width=3)
-        flab = hw("y=f(x)", 30).next_to(ax.c2p(0.05, 2.3), RIGHT, buff=0.15)
-        n1 = hw("1", 26).next_to(ax.c2p(1, 0), DL, buff=0.05)
-        n2 = hw("2", 26).next_to(ax.c2p(2, 0), DR, buff=0.05)
-        self.play(Create(ax), run_time=0.6)
-        self.play(Create(fg), MoveAlongPath(self.pen.set_opacity(1), fg), run_time=1.4)
-        self.write(flab, n1, n2)
-        self.say("f(x)의 그래프를 그려 보면, 1과 2에서 x축을 지납니다.")
-        sp = hw("+", 36).move_to(ax.c2p(0.05, 0.9))
-        sm = hw("-", 42).move_to(ax.c2p(1.5, -0.55))
-        sp2 = hw("+", 36).move_to(ax.c2p(2.95, 0.9))
-        self.write(sp, sm, sp2)
-        self.mark(Create(self.ellipse_around(sm, PEN_INK, pad=(0.2, 0.2))))
-        self.say("부호는 +, −, +.")
+        # 문제를 무대 위쪽 한 줄로 접고, 노트를 연다.
+        self.vo("hook3")
+        s1 = MathTex(r"\lim_{x\to a}", r"g(x)", r"\frac{|f(x)|}{f(x)}", font_size=30, color=DIM)
+        s2 = MathTex(r"\lim_{x\to a}", r"\frac{|g(x)-f(x)|}{g(x)}", font_size=30, color=DIM)
+        s3 = MathTex(r"g(-1)=", r"?", font_size=30, color=DIM)
+        strip = VGroup(s1, s2, s3).arrange(RIGHT, buff=0.7).move_to([SX, 3.45, 0])
+        self.play(FadeOut(sw), FadeOut(q), FadeOut(given), FadeOut(g_desc), FadeOut(cond),
+                  ReplacementTransform(lim1, s1), ReplacementTransform(lim2, s2),
+                  ReplacementTransform(ask, s3), run_time=1.2)
+        self.remove(s1, s2, s3)
+        self.strip = strip
+        self.add(strip)
+        self.open_card()
 
-        bx = -3.3
-        self.play(FadeIn(Dot(ax.c2p(3, 2), color=FAINT, radius=0.05)))
-        l3 = at(hw("x=3 근처:  |f(x)|/f(x) = 1  →  그냥 g(x)", 30, FAINT), bx, top - 0.3)
-        self.write(l3)
-        self.say("x=3 근처처럼 부호가 안 바뀌는 곳은 |f(x)|/f(x)=1. 식은 그냥 g(x)라 아무 일도 없습니다.")
+    # ---------- 1: 스위치 발견 ----------
+    def scene1(self):
+        self.vo("s1a")
+        e = MathTex(r"g(x)", r"\times", r"\frac{|f(x)|}{f(x)}", font_size=64, color=W).move_to([SX, 1.9, 0])
+        self.play(TransformFromCopy(self.strip[0], e), run_time=1.2)
+        self.play(e[2].animate.set_color(ACC), run_time=0.5)
+        self.play(Circumscribe(e[2], color=ACC), run_time=1.0)
 
-        dangers = VGroup(*[Dot(ax.c2p(x, 0), color=ACCENT, radius=0.07) for x in (1, 2)])
-        warn = hw("위험!", 32, ACCENT).next_to(ax.c2p(2.2, -0.45), RIGHT, buff=0.1)
-        self.play(FadeIn(dangers, scale=2))
-        self.write(warn)
-        self.say("문제는 부호가 바뀌는 x=1, x=2. 여기가 위험한 점입니다.")
+        self.vo("s1b")
+        ax = self.stage_axes([-0.5, 3.5, 1], [-1.6, 2.6, 1], 6.2, 3.6, [SX, -1.25, 0])
+        fg = ax.plot(f, x_range=[-0.25, 3.25], color=W, stroke_width=4)
+        self.play(Create(ax), FadeIn(self.ticks(ax, (1, 2, 3))), run_time=0.8)
+        self.play(Create(fg), run_time=1.2)
+        plus1 = M("+1", 36, ACC).move_to(ax.c2p(0.25, 1.6))
+        minus = M("-1", 36, ACC).move_to(ax.c2p(1.5, 1.0))
+        plus2 = M("+1", 36, ACC).move_to(ax.c2p(2.75, 1.6))
+        for m in (plus1, minus, plus2):
+            self.play(FadeIn(m, scale=1.4), run_time=0.45)
 
-        lim_p = at(row(hlim("x→1+", 34), hw("-g(x) = -g(1)", 38), buff=0.15), bx, top - 1.1)
-        lim_m = at(row(hlim("x→1-", 34), hw(" g(x) =  g(1)", 38), buff=0.15), bx, top - 1.95)
-        self.write(lim_p)
-        self.say("x=1의 오른쪽은 f(x)<0이라 −g(x)로 나와, −g(1)로 갑니다.")
-        self.write(lim_m)
-        self.say("왼쪽은 f(x)>0이라 g(x) 그대로, g(1)로 갑니다.")
+        self.vo("s1c")
+        steps = VGroup(
+            ax.plot(lambda x: 1, x_range=[-0.5, 0.97], color=ACC, stroke_width=6),
+            ax.plot(lambda x: -1, x_range=[1.03, 1.97], color=ACC, stroke_width=6),
+            ax.plot(lambda x: 1, x_range=[2.03, 3.5], color=ACC, stroke_width=6),
+        )
+        ghost = fg.copy()
+        self.play(fg.animate.set_stroke(color=DIM, opacity=0.4), run_time=0.4)
+        self.play(ReplacementTransform(ghost, steps), FadeOut(VGroup(plus1, minus, plus2)), run_time=2.0)
 
-        arrow = hw("⇒", 38).next_to(VGroup(lim_p, lim_m), RIGHT, buff=0.3)
-        concl = VGroup(hw("g(1) = 0", 40), hw("g(2) = 0", 40)).arrange(DOWN, buff=0.25)
-        concl.next_to(arrow, RIGHT, buff=0.25)
-        self.write(arrow, concl[0])
-        self.wait(0.5)
-        self.write(concl[1])
-        self.mark(Create(self.ellipse_around(concl, ACCENT, pad=(0.4, 0.35))))
-        self.say("두 값이 같아야 하니 g(1)=0. 같은 이유로 g(2)=0.")
+        self.vo("s1d")
+        jumps = VGroup(*[DashedLine(ax.c2p(x, -1), ax.c2p(x, 1), color=ACC) for x in (1, 2)])
+        dots = VGroup(*[Dot(ax.c2p(x, 0), color=ACC, radius=0.1) for x in (1, 2)])
+        self.play(Create(jumps), run_time=0.8)
+        self.play(FadeIn(dots, scale=2), Flash(dots[0], color=ACC), Flash(dots[1], color=ACC), run_time=1.0)
+        lab = T("위험한 점", 28, ACC).next_to(ax.c2p(1.5, -1.5), DOWN, buff=0.1)
+        self.play(FadeIn(lab, shift=UP * 0.1), run_time=0.5)
+        self.sync()
+        self.note("① |f(x)|/f(x) = 부호 스위치", "x = 1, 2 에서 뒤집힘")
+        self.switch_mini = VGroup(ax, steps).copy()
+        self.clear_stage()
 
-        g1 = at(hw("g(x) = (x-1)(x-2) · h(x)", 42), MAIN_L, -2.55)
-        self.write(g1)
-        self.say("그러면 g(x)는 (x−1)(x−2)를 인수로 가집니다.")
-        hnote = hw("h(x): 이차, 최고차항 계수 1", 30).next_to(g1, DOWN, buff=0.12).align_to(g1, LEFT)
-        self.write(hnote)
-        self.say("남은 부분을 h(x)라 하면, h(x)는 최고차항 계수가 1인 이차함수.")
-        self.mark(Create(self.underline(g1[5:15], PEN_INK)))
-        g2 = hw("= f(x) h(x)", 42).next_to(g1, RIGHT, buff=0.25)
-        self.write(g2)
-        self.say("그리고 (x−1)(x−2)는 바로 f(x)죠.")
-        self.pen_off()
+    # ---------- 2: 찢어지는 그래프 + 퀴즈 ----------
+    def scene2(self):
+        self.vo("s2a")
+        ax = self.stage_axes([0, 2, 0.5], [-3, 3, 1], 5.0, 4.6, [SX - 1.2, -0.75, 0])
+        x1 = DashedLine(ax.c2p(1, -3), ax.c2p(1, 3), color=DIM)
+        x1_lab = M("x=1", 28, DIM).next_to(ax.c2p(1, -3), DOWN, buff=0.1)
+        self.play(Create(ax), Create(x1), FadeIn(x1_lab), run_time=0.8)
+        lsign = M(r"g(x)\times(+1)", 34).move_to(ax.c2p(0.45, 2.6))
+        rsign = M(r"g(x)\times(-1)", 34).move_to(ax.c2p(1.55, 2.6))
+        self.play(FadeIn(lsign, shift=DOWN * 0.1), run_time=0.6)
+        self.wait(1.2)
+        self.play(FadeIn(rsign, shift=DOWN * 0.1), run_time=0.6)
 
-        # 장 넘김: 이 장의 결과를 오른쪽 칸에 모은다.
-        self.open_side()
-        self.collect(warn, "위험한 점: x = 1, 2")
-        self.collect(concl, "g(1) = g(2) = 0")
-        self.collect(g2, "g(x) = f(x) h(x)")
-        self.say("첫 번째 조건에서 얻은 것을 옆에 모아 두고, 다음 장으로 넘어갑시다.")
-        self.turn()
-        self.strip = self.build_strip()
-        self.play(FadeIn(self.strip, shift=DOWN * 0.2))
+        self.vo("s2b")
+        c = ValueTracker(2.0)
 
-    # ---------- 2장: 두 번째 조건 ----------
-    def page2(self):
-        self.mark(Create(self.underline(self.s_lim2, ACCENT, buff=0.04)))
-        e0 = at(row(hw("②", 40), hfrac("|g(x) - f(x)|", "g(x)", 40), buff=0.25), MAIN_L, 2.3)
-        self.write(e0)
-        sub = hw("← g(x) = f(x)h(x) 대입", 32, FAINT).next_to(e0, RIGHT, buff=0.4)
-        self.play(Indicate(self.side_items[2], color=ACCENT, scale_factor=1.12))
-        self.write(sub)
-        e1 = row(hw("=", 40), hfrac("|f(x)h(x) - f(x)|", "f(x)h(x)", 40), buff=0.25)
-        e1.next_to(e0, DOWN, buff=0.3).align_to(e0, LEFT)
-        self.write(e1)
-        self.say("이제 두 번째 식. g(x) 자리에 f(x)h(x)를 넣습니다.")
-        e2 = row(hw("=", 40), hfrac("|f(x)| · |h(x) - 1|", "f(x) · h(x)", 40), buff=0.25)
-        e2.next_to(e1, DOWN, buff=0.3).align_to(e0, LEFT)
-        self.write(e2)
-        self.say("분자에서 f(x)를 묶으면 |f(x)|·|h(x)−1|.")
-        sw = hfrac("|f(x)|", "f(x)", 40)
-        rest = hfrac("|h(x) - 1|", "h(x)", 40)
-        e3 = row(hw("=", 40), sw, hw("×", 40), rest, buff=0.25)
-        e3.next_to(e2, DOWN, buff=0.3).align_to(e0, LEFT)
-        self.write(e3)
-        self.say("정리하면 |f(x)|/f(x) × |h(x)−1|/h(x).")
-        e_sw = self.ellipse_around(sw, ACCENT, pad=(0.35, 0.2))
-        self.mark(Create(e_sw))
-        self.write(hw("스위치!", 32, ACCENT).next_to(e_sw, DOWN, buff=0.05))
-        self.play(Indicate(self.side_items[0], color=ACCENT, scale_factor=1.12))
-        self.say("아까 그 스위치가 또 나왔습니다.")
+        def g_near(x):
+            return c.get_value() + 1.2 * (x - 1)
 
-        cx = -1.0
-        c1 = at(hw("x = 1, 2 에서", 36), cx, 0.25)
-        c2 = hw("|h(x) - 1| = 0", 38).next_to(c1, DOWN, buff=0.2).align_to(c1, LEFT)
-        arr = Arrow(rest.get_right() + RIGHT * 0.05, c1.get_left() + LEFT * 0.1 + DOWN * 0.2,
-                    color=PEN_INK, stroke_width=2.5, buff=0.05, max_tip_length_to_length_ratio=0.15)
-        self.play(GrowArrow(arr))
-        self.write(c1, c2)
-        self.say("그러면 같은 논리로, x=1, 2에서 |h(x)−1|이 0이어야 합니다.")
-        c3 = hw("h(1) = 1,  h(2) = 1", 40).next_to(c2, DOWN, buff=0.3).align_to(c1, LEFT)
-        self.write(c3)
-        box_c3 = SurroundingRectangle(c3, color=ACCENT, buff=0.1, stroke_width=2.5)
-        self.mark(Create(box_c3))
-        self.say("즉 h(1)=1, h(2)=1.")
-        self.mark(Create(self.ellipse_around(rest[2], ACCENT, pad=(0.25, 0.15))))
-        c4 = hw("분모 h(x) ≠ 0", 40).next_to(c3, DOWN, buff=0.4).align_to(c1, LEFT)
-        self.write(c4)
-        self.say("그리고 분모 h(x)는 어디서도 0이면 안 됩니다.")
-        self.pen_off()
+        left = always_redraw(lambda: ax.plot(g_near, x_range=[0.05, 0.99], color=W, stroke_width=6))
+        right = always_redraw(lambda: ax.plot(lambda x: -g_near(x), x_range=[1.01, 1.95], color=W, stroke_width=6))
+        el = always_redraw(lambda: Circle(0.1, color=W, stroke_width=3).move_to(ax.c2p(1, c.get_value())))
+        er = always_redraw(lambda: Circle(0.1, color=W, stroke_width=3).move_to(ax.c2p(1, -c.get_value())))
+        gap = always_redraw(lambda: Line(ax.c2p(1, -c.get_value()), ax.c2p(1, c.get_value()),
+                                         color=ACC, stroke_width=6) if c.get_value() > 0.05 else VMobject())
+        self.play(Create(left), FadeIn(el), run_time=1.0)
+        self.play(Create(right), FadeIn(er), run_time=1.0)
+        self.play(FadeIn(gap), run_time=0.4)
+        tear = T("찢어짐!", 32, ACC).next_to(ax.c2p(1, 0), RIGHT, buff=0.3)
+        self.play(FadeIn(tear, scale=1.3), Wiggle(gap), run_time=1.0)
+        cval = M(r"g(1)=2", 44).move_to([1.4, 1.6, 0])
+        self.play(FadeIn(cval), run_time=0.4)
 
-        self.collect(c3, "h(1) = h(2) = 1")
-        self.collect(c4, "h(x) ≠ 0")
-        self.say("두 번째 조건에서 얻은 것도 모아 두고, 넘어갑시다.")
-        self.turn()
+        self.vo("s2c")
+        self.play(FadeOut(tear), run_time=0.3)
+        quiz = M(r"g(1)=\,?", 64, ACC).move_to([1.4, 0.2, 0])
+        self.play(ReplacementTransform(cval, quiz), run_time=0.8)
+        self.sync(pad=0.1)
+        for n in ("3", "2", "1"):
+            num = M(n, 90, W).move_to([1.4, -1.5, 0])
+            self.play(FadeIn(num, scale=1.6), run_time=0.25)
+            self.play(FadeOut(num, scale=0.6), run_time=0.75)
 
-    # ---------- 3장: h(x)와 답 ----------
-    def page3(self):
-        self.play(Indicate(VGroup(*self.side_items[3:5]), color=ACCENT, scale_factor=1.08))
-        k1 = at(hw("h(x) - 1 = (x-1)(x-2)", 42), MAIN_L, 2.3)
-        self.write(k1)
-        self.say("h(x)−1은 x=1, 2를 근으로 갖고 최고차항 계수가 1이니 (x−1)(x−2).")
-        k2 = hw("h(x) = (x-1)(x-2) + 1", 42).next_to(k1, DOWN, buff=0.3).align_to(k1, LEFT)
-        k2b = hw("= x² - 3x + 3", 42).next_to(k2, DOWN, buff=0.2).align_to(k2[4], LEFT)
-        self.write(k2, k2b)
-        self.say("따라서 h(x)=(x−1)(x−2)+1 = x²−3x+3.")
-        k3 = hw("D = 9 - 12 < 0  →  h(x) ≠ 0  OK", 38).next_to(k2b, DOWN, buff=0.35).align_to(k1, LEFT)
-        self.write(k3)
-        self.mark(Create(self.underline(k3, ACCENT)))
-        self.say("판별식 D = 9 − 12 < 0. 실근이 없으니 h(x)≠0도 만족.")
-        self.pen_off()
+        self.vo("s2d")
+        ans = M(r"g(1)=0", 64, W).move_to(quiz)
+        self.play(ReplacementTransform(quiz, ans), run_time=0.6)
+        self.play(c.animate.set_value(0), run_time=3.0, rate_func=smooth)
+        self.play(Flash(ax.c2p(1, 0), color=ACC, line_length=0.3), run_time=0.6)
 
-        ax = Axes(x_range=[-0.5, 3.5, 1], y_range=[-0.8, 3.2, 1], x_length=3.0, y_length=3.0,
-                  tips=False, axis_config={"color": INK, "stroke_width": 1.5, "include_ticks": False})
-        ax.move_to([0.9, 1.2, 0])
-        fg = ax.plot(f, x_range=[-0.2, 3.2], color=FAINT, stroke_width=3)
-        hg = ax.plot(lambda x: f(x) + 1, x_range=[-0.1, 3.1], color=PEN_INK, stroke_width=3)
-        flab = hw("f(x)", 28, FAINT).next_to(ax.c2p(3.2, f(3.2)), RIGHT, buff=0.05)
-        hlab = hw("h(x)", 28).next_to(ax.c2p(3.1, f(3.1) + 1), RIGHT, buff=0.05)
-        floor = DashedLine(ax.c2p(-0.5, 0.75), ax.c2p(3.5, 0.75), color=ACCENT, stroke_width=2)
-        flo_lab = hw("바닥 3/4", 26, ACCENT).next_to(floor, DOWN, buff=0.05).align_to(floor, RIGHT)
-        self.play(Create(ax), run_time=0.5)
-        self.play(Create(fg), FadeIn(flab))
-        arrows = [Arrow(ax.c2p(x, f(x)), ax.c2p(x, f(x) + 1), buff=0.04, color=PEN_INK, stroke_width=2.5,
-                        max_tip_length_to_length_ratio=0.3) for x in (1, 1.5, 2)]
-        for a in arrows:
-            self.play(GrowArrow(a), run_time=0.35)
-        self.play(Create(hg), FadeIn(hlab), *[FadeOut(a) for a in arrows])
-        self.play(Create(floor), FadeIn(flo_lab))
-        self.say("그림으로 보면, h(x)는 f(x)를 위로 1만큼 올린 포물선. 바닥이 3/4이라 x축에 닿지 않죠.")
+        self.vo("s2e")
+        ans2 = M(r"g(2)=0", 64, W).next_to(ans, DOWN, buff=0.35)
+        self.play(FadeIn(ans2, shift=UP * 0.15), run_time=0.6)
+        self.wait(1.5)
+        rule = VGroup(T("뒤집히는 곳에서는", 28), T("곱해진 값 = 0", 34, ACC)).arrange(DOWN, buff=0.12)
+        rule.next_to(ans2, DOWN, buff=0.45)
+        frame = SurroundingRectangle(rule, color=ACC, buff=0.18, corner_radius=0.1)
+        self.play(Create(frame), FadeIn(rule), run_time=1.0)
+        self.sync()
+        self.note("② 뒤집히는 곳: 곱해진 값 = 0", "→ g(1) = g(2) = 0", accent=1)
+        self.clear_stage()
 
-        self.mark(Create(self.ellipse_around(self.s_gm1, ACCENT, pad=(0.25, 0.15))))
-        a1 = at(hw("g(x) = f(x){f(x) + 1}", 44), MAIN_L, -1.35)
-        self.write(a1)
-        self.say("정리하면 g(x)=f(x){f(x)+1}.")
-        a2 = hw("g(-1) = 6 × 7 =", 44).next_to(a1, DOWN, buff=0.35).align_to(a1, LEFT)
-        note = hw("f(-1) = (-2)(-3) = 6", 32, FAINT).next_to(a1, RIGHT, buff=0.6)
-        ans = hw("42", 60, ACCENT).next_to(a2, RIGHT, buff=0.2)
-        self.write(note, a2, ans)
-        ans_box = SurroundingRectangle(ans, color=ACCENT, buff=0.1, stroke_width=3)
-        self.mark(Create(ans_box))
-        self.play(Flash(ans, color=ACCENT, line_length=0.25, num_lines=12))
-        self.say("f(−1)=(−2)(−3)=6이니 g(−1)=6×7=42.")
-        self.pen_off()
+        self.vo("s2f")
+        a = MathTex(r"g(x)", r"=", r"(x-1)(x-2)", r"\,h(x)", font_size=64, color=W).move_to([SX, 0.6, 0])
+        self.play(Write(a), run_time=1.6)
+        brace = Brace(a[2], DOWN, color=DIM)
+        bf = M("f(x)", 48, DIM).next_to(brace, DOWN)
+        self.play(GrowFromCenter(brace), FadeIn(bf), run_time=0.8)
+        b = MathTex(r"g(x)", r"=", r"f(x)", r"\,h(x)", font_size=72, color=W).move_to([SX, 0.6, 0])
+        self.play(FadeOut(brace), FadeOut(bf), TransformMatchingTex(a, b), run_time=1.2)
+        hn = T("h(x): 최고차항 계수가 1인 이차함수", 26, DIM).next_to(b, DOWN, buff=0.5)
+        self.play(FadeIn(hn), run_time=0.5)
+        self.sync()
+        self.note("③ g(x) = f(x) h(x)", "h(x): 이차, 최고차항 계수 1")
+        self.clear_stage()
 
-        self.collect(VGroup(k2, k2b), "h(x) = f(x) + 1")
-        tgt = self.collect(VGroup(ans, ans_box), "g(-1) = 42")
-        self.play(tgt[-2:].animate.set_color(ACCENT))
-        self.say("답까지 나왔습니다. 마지막으로 한 걸음만 더 가 봅시다.")
-        self.turn()
+    # ---------- 3: 반전 — 같은 스위치 ----------
+    def scene3(self):
+        self.vo("s3a")
+        e0 = M(r"\frac{|g(x)-f(x)|}{g(x)}", 70).move_to([SX, 1.3, 0])
+        self.play(TransformFromCopy(self.strip[1], e0), run_time=1.2)
 
-    # ---------- 4장: 보너스와 정리 ----------
-    def page4(self):
-        ax = Axes(x_range=[-0.5, 3.5, 1], y_range=[-1, 3.2, 1], x_length=3.2, y_length=3.2,
-                  tips=False, axis_config={"color": INK, "stroke_width": 1.5, "include_ticks": False})
-        ax.move_to([-4.9, 0.95, 0])
-        fg = ax.plot(f, x_range=[-0.2, 3.2], color=FAINT, stroke_width=3)
-        flab = hw("f(x)", 28, FAINT).next_to(ax.c2p(3.2, f(3.2)), RIGHT, buff=0.05)
+        self.vo("s3b")
+        e1 = M(r"\frac{|f(x)h(x)-f(x)|}{f(x)h(x)}", 70).move_to(e0)
+        self.play(TransformMatchingShapes(e0, e1), run_time=1.4)
+        self.wait(1.0)
+        e2 = M(r"\frac{|f(x)|\,|h(x)-1|}{f(x)\,h(x)}", 70).move_to(e0)
+        self.play(TransformMatchingShapes(e1, e2), run_time=1.4)
+
+        self.vo("s3c")
+        e3 = MathTex(r"\frac{|f(x)|}{f(x)}", r"\times", r"\frac{|h(x)-1|}{h(x)}", font_size=70, color=W).move_to(e0)
+        self.play(TransformMatchingShapes(e2, e3), run_time=1.2)
+        mini = self.switch_mini.scale(0.35).next_to(e3[0], DOWN, buff=0.4)
+        self.play(e3[0].animate.set_color(ACC), FadeIn(mini, shift=UP * 0.5), run_time=0.8)
+        stamp = T("같은 스위치!", 36, ACC).next_to(mini, RIGHT, buff=0.3)
+        self.play(FadeIn(stamp, scale=1.8), Flash(e3[0], color=ACC, line_length=0.3), run_time=0.8)
+
+        self.vo("s3d")
+        self.play(self.strip[0][2].animate.set_color(ACC), self.strip[1].animate.set_color(ACC), run_time=0.6)
+        link = T("두 조건 = 같은 스위치", 30, ACC).next_to(self.strip, DOWN, buff=0.2)
+        self.play(FadeIn(link, shift=DOWN * 0.1), run_time=0.6)
+        self.sync()
+        self.play(FadeOut(link), self.strip[0][2].animate.set_color(DIM),
+                  self.strip[1].animate.set_color(DIM), FadeOut(mini), FadeOut(stamp), run_time=0.5)
+
+        self.vo("s3e")
+        r1 = MathTex(r"x=1,2:\ \ |h(x)-1|\to 0", r"\ \Rightarrow\ ", r"h(1)=h(2)=1", font_size=46, color=W)
+        r1.next_to(e3, DOWN, buff=0.8).set_x(SX)
+        self.play(Write(r1[0]), run_time=1.4)
+        self.play(Write(r1[1]), Write(r1[2]), run_time=1.0)
+        self.play(Create(SurroundingRectangle(r1[2], color=ACC, buff=0.1)), run_time=0.6)
+
+        self.vo("s3f")
+        den = e3[2][-4:]
+        self.play(Circumscribe(den, color=ACC, shape=Circle), run_time=1.0)
+        r2 = M(r"h(x)\neq 0", 50, ACC).next_to(r1, DOWN, buff=0.4).set_x(SX)
+        self.play(Write(r2), run_time=0.8)
+        self.sync()
+        self.note("④ 두 번째 식도 같은 스위치!", "h(1) = h(2) = 1,  h(x) ≠ 0", accent=0)
+        self.clear_stage()
+
+    # ---------- 4: 포물선 들어 올리기 ----------
+    def scene4(self):
+        ax = self.stage_axes([-0.5, 3.5, 1], [-1, 3.4, 1], 5.6, 4.0, [SX, -1.15, 0])
+        self.vo("s4a")
+        self.play(Create(ax), FadeIn(self.ticks(ax, (1, 2, 3))), run_time=0.8)
+        pts = VGroup(*[Dot(ax.c2p(x, 1), color=W, radius=0.1) for x in (1, 2)])
+        self.play(FadeIn(pts, scale=2), run_time=0.6)
+        ptl = M(r"h(1)=h(2)=1", 36).next_to(ax.c2p(1.5, 1), UP, buff=0.9)
+        self.play(FadeIn(ptl), run_time=0.5)
+
+        self.vo("s4b")
+        fg = ax.plot(f, x_range=[-0.2, 3.2], color=DIM, stroke_width=4)
+        flab = M("f(x)", 32, DIM).next_to(ax.c2p(3.2, f(3.2)), RIGHT, buff=0.08)
+        self.play(Create(fg), FadeIn(flab), FadeOut(ptl), run_time=1.2)
+        zeros = VGroup(*[Dot(ax.c2p(x, 0), color=DIM, radius=0.08) for x in (1, 2)])
+        self.play(FadeIn(zeros), run_time=0.4)
+        self.wait(1.0)
+        arrows = VGroup(*[Arrow(ax.c2p(x, f(x)), ax.c2p(x, f(x) + 1), buff=0.04, color=ACC,
+                                stroke_width=4, max_tip_length_to_length_ratio=0.3) for x in (0.3, 1, 1.5, 2, 2.7)])
+        self.play(LaggedStart(*[GrowArrow(a) for a in arrows], lag_ratio=0.15), run_time=1.0)
+        hg = fg.copy()
+        target = ax.plot(lambda x: f(x) + 1, x_range=[-0.2, 3.2], color=W, stroke_width=5)
+        self.play(Transform(hg, target), run_time=1.8)
+        hlab = M("h(x)", 32).next_to(ax.c2p(3.2, f(3.2) + 1), RIGHT, buff=0.08)
+        self.play(FadeIn(hlab), FadeOut(arrows), run_time=0.5)
+
+        self.vo("s4c")
+        eq = M(r"h(x)=f(x)+1=x^2-3x+3", 46).move_to([SX, 2.55, 0])
+        self.play(Write(eq), run_time=1.6)
+        dd = M(r"D=9-12<0", 46, ACC).next_to(eq, DOWN, buff=0.3)
+        self.play(Write(dd), run_time=1.0)
+        floor = DashedLine(ax.c2p(-0.5, 0.75), ax.c2p(3.5, 0.75), color=ACC, stroke_width=3)
+        fl = T("바닥 3/4 > 0", 24, ACC).next_to(floor, RIGHT, buff=0.1)
+        self.play(Create(floor), FadeIn(fl), run_time=1.0)
+        self.sync()
+        self.note("⑤ h(x) = f(x) + 1 = x² - 3x + 3", "D < 0 → x축과 안 만남")
+        self.clear_stage()
+
+    # ---------- 5: 답 ----------
+    def scene5(self):
+        self.vo("s5a")
+        g = M(r"g(x)=f(x)\{f(x)+1\}", 70).move_to([SX, 1.2, 0])
+        self.play(Write(g), run_time=2.0)
+
+        self.vo("s5b")
+        a1 = M(r"f(-1)=(-2)(-3)=6", 52, DIM).next_to(g, DOWN, buff=0.55)
+        self.play(FadeIn(a1, shift=UP * 0.1), run_time=0.7)
+        a2 = MathTex(r"g(-1)=6\times7=", r"42", font_size=70, color=W).next_to(a1, DOWN, buff=0.55)
+        a2[1].set_color(ACC).scale(1.5)
+        self.play(Write(a2[0]), run_time=1.2)
+        self.play(FadeIn(a2[1], scale=0.4), run_time=0.6)
+        self.play(Flash(a2[1], color=ACC, line_length=0.4, num_lines=16), run_time=0.8)
+        new_q = MathTex(r"42", font_size=30, color=ACC).move_to(self.strip[2][1])
+        self.play(Transform(self.strip[2][1], new_q), run_time=0.6)
+        self.sync()
+        self.answer_note = self.note("답  g(-1) = 6 × 7 = 42", accent=0)
+        box = SurroundingRectangle(self.answer_note, color=NOTE_ACC, buff=0.08, stroke_width=2.5)
+        self.play(Create(box), run_time=0.5)
+        self.notes.append(box)
+        self.clear_stage()
+
+    # ---------- 6: 출제자의 설계 ----------
+    def scene6(self):
+        self.vo("s6a")
+        q = M(r"\frac{|g(x)-\mathbf{1}\cdot f(x)|}{g(x)}", 60).move_to([SX, 1.6, 0])
+        self.play(TransformFromCopy(self.strip[1], q), run_time=1.2)
+        self.play(Circumscribe(q, color=ACC), run_time=1.0)
+
+        self.vo("s6b")
+        qk = MathTex(r"\frac{|g(x)-", r"k", r"\,f(x)|}{g(x)}", font_size=50, color=W).move_to([SX + 2.6, 2.4, 0])
+        qk[1].set_color(ACC)
+        self.play(ReplacementTransform(q, qk), run_time=1.0)
+        ax = self.stage_axes([-0.5, 3.5, 1], [-1, 3.2, 1], 5.0, 4.0, [SX - 1.3, -0.9, 0])
+        fg = ax.plot(f, x_range=[-0.2, 3.2], color=DIM, stroke_width=4)
         k = ValueTracker(1.0)
 
-        def hcol():
-            return PEN_INK if k.get_value() > 0.25 + 1e-3 else ACCENT
+        def col():
+            return W if k.get_value() > 0.25 + 1e-3 else ACC
 
         hg = always_redraw(lambda: ax.plot(lambda x: f(x) + k.get_value(), x_range=[-0.1, 3.1],
-                                           color=hcol(), stroke_width=3))
-        kval = always_redraw(lambda: hw(f"k = {k.get_value():.2f}", 34, hcol())
-                             .next_to(ax, DOWN, buff=0.15).align_to(ax, LEFT))
+                                           color=col(), stroke_width=5))
+        kv = always_redraw(lambda: M(rf"k={k.get_value():.2f}", 52, col()).move_to([1.3, 0.2, 0]))
+        hk = MathTex(r"h(x)=f(x)+", r"k", font_size=44, color=W).next_to(qk, DOWN, buff=0.35)
+        hk[1].set_color(ACC)
+        self.play(Create(ax), Create(fg), run_time=0.8)
+        self.play(Create(hg), Write(hk), FadeIn(kv), run_time=1.2)
+        self.wait(1.0)
+        self.play(k.animate.set_value(0.6), run_time=1.5)
 
-        nx = -2.6
-        q = at(row(hw("1 → k 라면?", 36), hfrac("|g(x) - k·f(x)|", "g(x)", 34), buff=0.3), nx, 2.3)
-        self.mark(Create(self.underline(self.s_lim2, ACCENT, buff=0.04)))
-        self.write(q)
-        self.say("문제의 1이 다른 수 k였다면?")
-        r1 = hw("→  h(x) = f(x) + k,  바닥 = k - 1/4", 34).next_to(q, DOWN, buff=0.3).align_to(q, LEFT)
-        self.write(r1)
-        self.pen_off()
-        self.play(Create(ax), Create(fg), FadeIn(flab))
-        self.play(Create(hg), FadeIn(kval))
-        self.say("같은 논리로 h(x)=f(x)+k. 바닥은 k−1/4.")
-        self.play(k.animate.set_value(0.25), run_time=3.5, rate_func=linear)
-        self.play(Flash(ax.c2p(1.5, 0), color=ACCENT))
-        boom = hw("x축에 닿음 → h(x) = 0 → 극한 붕괴", 32, ACCENT).next_to(r1, DOWN, buff=0.25).align_to(q, LEFT)
-        self.write(boom)
-        self.say("k를 줄여 보면… 1/4에서 바닥이 x축에 닿고, 극한이 깨집니다.")
-        self.play(k.animate.set_value(1.0), run_time=2)
-        r2 = hw("∴  k > 1/4 일 때만 성립,  1은 안전!", 36).next_to(boom, DOWN, buff=0.3).align_to(q, LEFT)
-        self.write(r2)
-        self.mark(Create(SurroundingRectangle(r2, color=ACCENT, buff=0.12, stroke_width=2.5)))
-        self.say("그래서 이 문제는 k > 1/4일 때만 성립합니다. 1은 안전한 선택이었죠.")
-        self.pen_off()
+        self.vo("s6c")
+        self.play(k.animate.set_value(0.25), run_time=2.2, rate_func=linear)
+        self.play(Flash(ax.c2p(1.5, 0), color=ACC, line_length=0.35, num_lines=14), run_time=0.7)
+        boom = T("h(x) = 0 → 극한 붕괴", 28, ACC).move_to([1.3, -0.55, 0])
+        self.play(FadeIn(boom, scale=1.4), Wiggle(hg), run_time=1.2)
 
-        sum_title = hw("오늘의 도구", 32)
-        s1 = hw("① |f(x)|/f(x) 는 부호 스위치", 30)
-        s2 = hw("② 스위치가 뒤집히는 곳에서 곱해진 값 = 0", 30)
-        s3 = hw("③ 분모는 어디서도 0이 되면 안 된다", 30)
-        sg = VGroup(sum_title, s1, s2, s3).arrange(DOWN, aligned_edge=LEFT, buff=0.1)
-        sg.next_to(r2, DOWN, buff=0.5).align_to(q, LEFT).shift(RIGHT * 0.2)
-        frame = SurroundingRectangle(sg, color=PEN_INK, buff=0.2, corner_radius=0.1, stroke_width=2)
-        self.play(Create(frame), run_time=0.6)
-        self.write(sum_title)
-        self.say("오늘 쓴 도구를 정리하면,", 1.2)
-        for line, cap in ((s1, "① |f(x)|/f(x)는 부호 스위치."),
-                          (s2, "② 스위치가 뒤집히는 곳에서는 곱해진 값이 0."),
-                          (s3, "③ 분모는 어디서도 0이 되면 안 된다.")):
-            self.write(line)
-            self.say(cap)
-        self.pen_off()
-        self.play(Indicate(self.side_items[-1], color=ACCENT, scale_factor=1.15))
-        self.say("답은 42.", 3)
-        self.play(*[FadeOut(m) for m in self.mobjects])
+        self.vo("s6d")
+        self.play(k.animate.set_value(1.0), FadeOut(boom), run_time=1.5)
+        nl = NumberLine(x_range=[0, 1.5, 0.25], length=3.4, include_numbers=False,
+                        color=DIM).move_to([1.2, -1.5, 0])
+        safe = Line(nl.n2p(0.25), nl.n2p(1.5), color=W, stroke_width=8)
+        hole = Circle(0.08, color=ACC, stroke_width=3).move_to(nl.n2p(0.25))
+        ql = M(r"\tfrac14", 32, ACC).next_to(nl.n2p(0.25), DOWN)
+        one = Dot(nl.n2p(1), color=ACC, radius=0.11)
+        one_l = M("1", 34, ACC).next_to(one, UP)
+        self.play(Create(nl), run_time=0.5)
+        self.play(Create(safe), FadeIn(hole), FadeIn(ql), run_time=0.8)
+        self.play(FadeIn(one, scale=2), FadeIn(one_l), run_time=0.6)
+        res = M(r"k>\tfrac14", 52, ACC).next_to(nl, DOWN, buff=0.7)
+        self.play(Write(res), run_time=0.8)
+        self.sync()
+        self.note("+ 1 대신 k 라면:  k > 1/4 일 때만", accent=0)
+        self.clear_stage()
+
+    # ---------- 마무리 ----------
+    def outro(self):
+        self.vo("out1")
+        self.play(FadeOut(self.strip), FadeOut(self.src), run_time=0.6)
+        whole = VGroup(self.card, *self.notes)
+        self.play(whole.animate.move_to(ORIGIN), run_time=1.4)
+        self.play(Indicate(self.answer_note, color=NOTE_ACC, scale_factor=1.06), run_time=1.0)
+        self.sync(pad=1.5)
+        self.play(FadeOut(whole), run_time=1.0)
