@@ -298,7 +298,7 @@ class Killer21(Scene):
         self.say("판별식 D = 9 − 12 < 0. 실근이 없으니 h(x)≠0도 만족.")
 
         # ---- 답 (주황 펜) ----
-        a1 = hw("g(x) = f(x){f(x) + 1},   f(-1) = 6", 32, PEN_INK).move_to([-3.15, -3.0, 0], aligned_edge=LEFT)
+        a1 = hw("g(x) = f(x){f(x)+1},  f(-1) = 6", 30, PEN_INK).move_to([-3.2, -3.0, 0], aligned_edge=LEFT)
         self.write(a1)
         self.say("정리하면 g(x)=f(x){f(x)+1}. 그리고 f(−1)=(−2)(−3)=6.")
         self.mark(Create(self.ellipse_around(self.p_gm1, ACCENT, pad=(0.25, 0.15))))
